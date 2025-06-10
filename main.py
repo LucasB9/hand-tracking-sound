@@ -1,8 +1,8 @@
 import cv2
 import mediapipe as mp
 import osascript
-import math
 from contextlib import contextmanager
+from handleHand import Hand
 
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
@@ -10,6 +10,13 @@ VOLUME_MIN = 0
 VOLUME_MAX = 100
 THUMB_TIP = 4
 INDEX_TIP = 8
+
+MUSIC_COMMANDS = {
+    'play': 'tell application "Spotify" to play',
+    'pause': 'tell application "Spotify" to pause',
+    'next': 'tell application "Spotify" to next track',
+    'previous': 'tell application "Spotify" to previous track',
+}
 
 @contextmanager
 def camera_capture():
@@ -22,27 +29,24 @@ def camera_capture():
         cap.release()
         cv2.destroyAllWindows()
 
-def calculate_distance_landmarks(landmark1, landmark2):
-    return math.sqrt(
-        (landmark1.x - landmark2.x)**2 + 
-        (landmark1.y - landmark2.y)**2 + 
-        (landmark1.z - landmark2.z)**2
-    )
-
-def set_volume(volume):
+def control_music(command):
     try:
-        volume = max(VOLUME_MIN, min(VOLUME_MAX, int(volume * 100)))
-        osascript.osascript(f"set volume output volume {volume}")
+        if command in MUSIC_COMMANDS:
+            osascript.osascript(MUSIC_COMMANDS[command])
+        else:
+            print(f"Unknown command: {command}")
     except Exception as e:
-        print(f"Error setting volume: {e}")
+        print(f"Error controlling Spotify: {e}")
 
 def main():
     mp_drawing = mp.solutions.drawing_utils
     mp_hands = mp.solutions.hands
+    volume_hand = Hand()
+    music_hand = Hand()
     
     with mp_hands.Hands(
         static_image_mode=False,
-        max_num_hands=1,
+        max_num_hands=2,
         min_detection_confidence=0.7,
         min_tracking_confidence=0.5
     ) as hands, camera_capture() as cap:
@@ -56,23 +60,34 @@ def main():
             results = hands.process(RGB_frame)
 
             if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
+                for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
                     mp_drawing.draw_landmarks(
                         frame, 
                         hand_landmarks, 
                         mp_hands.HAND_CONNECTIONS
                     )
                     
-                    distance = calculate_distance_landmarks(
-                        hand_landmarks.landmark[THUMB_TIP],
-                        hand_landmarks.landmark[INDEX_TIP]
-                    )
-                    set_volume(distance)
+                    is_left_hand = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x < 0.5
+                    
+                    if is_left_hand:
+                        volume_hand.detect_pinch(hand_landmarks)
+                    else:
+                        movement = music_hand.detect_movement(hand_landmarks)
+                        if movement:
+                            print("movement", movement)
+                            if movement == "next":
+                                control_music('next')
+                            elif movement == "previous":
+                                control_music('previous')
+                            elif movement == "play":
+                                control_music('play')
+                            elif movement == "pause":
+                                control_music('pause')
 
             cv2.imshow("Hand Tracking", frame)
             
             key = cv2.waitKey(1)
-            if key == ord('q'):  
+            if key == ord('q'):
                 break
 
 if __name__ == "__main__":
